@@ -181,13 +181,56 @@ summary_edges = gpd.GeoDataFrame(summary_edges, geometry='geometry', crs="EPSG:4
 #simplify geometry slightly (0.00001 deg ≈ 1 meter) to shrink HTML size
 summary_edges['geometry'] = summary_edges['geometry'].simplify(0.00001)
 
+def label_subclass(fac_str):
+    #extract the primary bike facility code if present (ignore 'none' unless both directions are 'none')
+    parts = [p.strip() for p in fac_str.split('/') if p.strip() != 'none'] #remove silly spacing
+    code = parts[0] if parts else 'none'
+    
+    subclass_names = {
+        '1': 'Class I (Protected)',
+        '2': 'Class II (Painted Lane)',
+        '3': 'Class III (Sharrow)',
+        '4': 'Class II (Ped Bridge)',
+        '5': 'Combo I + II',
+        '6': 'Combo II + III',
+        '8': 'Combo I + III',
+        '9': 'Combo II + I',
+        '10': 'Combo III + I',
+        '11': 'Combo III + II',
+        'none': 'Class IV (No Bike Facility)'
+    }
+    return subclass_names.get(code, f'Other ({code})')
+
+summary_edges['subclass'] = summary_edges['facility'].apply(label_subclass)
+
+# Assign distinct colors to each subclass present in the bounding box
+subclass_palette = {
+    'Class I (Protected)': '#006d2c',        #dark green
+    'Combo I + II': '#2ca25f',               #medium green
+    'Combo II + I': '#2ca25f',               #medium green
+    'Combo I + III': '#2d8421',              #medium-dark green !
+    'Combo III + I': '#2d8421',              #medium-dark green !
+    'Class II (Painted Lane)': '#00ee5f',    #light green
+    'Class II (Ped Bridge)': '#00ee5f',      #light green
+    'Combo II + III': '#6feea1',             #sickly pale green
+    'Combo III + II': '#6feea1',             #sickly pale green
+    'Class III (Sharrow)': '#d95f02',        # orange
+    'Class IV (No Bike Facility)': '#969696' # gray
+}
+
+# Build ordered category list and matching color list for explore() legend
+present_classes = sorted(summary_edges['subclass'].unique())
+colors = [subclass_palette.get(c, '#000000') for c in present_classes]
+
 #render the base map (1 polyline per street instead of 2)
 m = summary_edges.explore(
-    column='mode',
-    cmap='Set1',
-    style_kwds={'weight': 3, 'opacity': 0.85},
-    tooltip=['streetname', 'segment_id', 'flow_type', 'mode', 'facility', 'weight'],
-    tiles='CartoDB positron',
+    column='subclass',
+    categories=present_classes,
+    cmap=colors,
+    legend=True,
+    style_kwds={'weight': 3.5, 'opacity': 0.9},
+    tooltip=['streetname', 'segment_id', 'subclass', 'flow_type', 'facility', 'weight'],
+    tiles='OpenStreetMap',
     prefer_canvas=True
 )
 
