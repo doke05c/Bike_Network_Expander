@@ -270,18 +270,18 @@ for _, row in summary_edges.iterrows():
             <div style="
                 transform: rotate({angle:.1f}deg);
                 color: #000000;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: bold;
-                line-height: 14px;
+                line-height: 12px;
                 text-align: center;
-                text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
+                text-shadow: -.75px -.75px 0 #fff, .75px -.75px 0 #fff, -.75px .75px 0 #fff, .75px .75px 0 #fff;
             ">➤</div>
         '''
         folium.Marker(
             location=[lat, lon],
             icon=folium.DivIcon(
-                icon_size=(8, 8),
-                icon_anchor=(4, 4),
+                icon_size=(12, 12),
+                icon_anchor=(6, 6),
                 html=icon_html
             )
         ).add_to(m)
