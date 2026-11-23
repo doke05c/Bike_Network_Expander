@@ -230,7 +230,8 @@ m = summary_edges.explore(
     legend=True,
     style_kwds={'weight': 3.5, 'opacity': 0.9},
     tooltip=['streetname', 'segment_id', 'subclass', 'flow_type', 'facility', 'weight'],
-    tiles='OpenStreetMap',
+    tiles='https://arcgisonline.com{z}/{y}/{x}',
+    attr='Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
     prefer_canvas=True
 )
 
