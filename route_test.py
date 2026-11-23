@@ -45,14 +45,72 @@ lane_class_multipliers = {
 }
 
 #map multipliers (default to default street if missing) and calculate final edge weight using length attribute
-gdf['multiplier'] = gdf['BikeLane'].map(lane_class_multipliers).fillna(class_4_weight)
 gdf['length_m'] = gdf.geometry.length
-gdf['weight'] = gdf['length_m'] * gdf['multiplier']
+
+#bike and road weights are separate
+gdf['bike_mult'] = gdf['BikeLane'].map(lane_class_multipliers).fillna(class_4_weight)
+gdf['bike_weight'] = gdf['length_m'] * gdf['bike_mult']
+gdf['road_weight'] = gdf['length_m'] * class_4_weight
+
+#make graph with NetworkX
+G = nx.DiGraph()
+
+for idx, row in gdf.iterrows():
+    u, v = row['NodeIDFrom'], row['NodeIDTo']
+    
+    #accounting for directionality
+
+    bike_dir = str(row.get('BIKE_TRAFDIR') or '').strip().upper()
+    road_dir = str(row.get('TrafDir') or '').strip().upper()
+    
+    base_attrs = {
+        'length': row['length_m'],
+        'segment_id': row.get('SegmentID'),
+        'geometry': row.geometry
+    }
+
+    #direction 1: forward (from -> to segments) 
+    if bike_dir in ('FT', 'TW'):
+        G.add_edge(u, v, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
+    elif road_dir in ('W', 'T', 'P'):
+        G.add_edge(u, v, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
+
+    #direction 2: reverse (to -> from segments) 
+    if bike_dir in ('TF', 'TW'):
+        G.add_edge(v, u, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
+    elif road_dir in ('A', 'T', 'P'):
+        G.add_edge(v, u, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
 
 #apprx 183k linestrings
 print(gdf.geom_type.value_counts())
 print("Columns:", gdf.columns.tolist())
 print(gdf.head(2).T)
 
+#count nodes and edges
+print(f"Nodes: {G.number_of_nodes()}, Directed Edges: {G.number_of_edges()}")
 
-#DONT FORGET DIRECTIONALITY!!!
+#check how many directed edges were created under each mode
+from collections import Counter
+modes = Counter(data['mode'] for _, _, data in G.edges(data=True))
+print("Edge modes:", modes)
+
+
+#print 5 sample bike_network edges and 5 mixed_traffic edges, and 5 sample protected bike network edges
+
+print("--------STANDARD BIKE EDGES--------")
+
+bike_edges = [(u, v, d) for u, v, d in G.edges(data=True) if d['mode'] == 'bike_network'][:5]
+for u, v, d in bike_edges:
+    print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
+print("--------MIXED TRAFFIC EDGES--------")
+
+mixed_traffic_edges = [(u, v, d) for u, v, d in G.edges(data=True) if d['mode'] == 'mixed_traffic'][:5]
+for u, v, d in mixed_traffic_edges:
+    print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
+print("--------PROTECTED BIKE EDGES--------")
+
+protected_bike_edges = [(u, v, d) for u, v, d in G.edges(data=True) if (d['mode'] == 'bike_network' and d['facility'] == ' 1')][:5]
+for u, v, d in protected_bike_edges:
+    print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
