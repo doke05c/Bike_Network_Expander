@@ -197,7 +197,7 @@ def label_subclass(fac_str):
         '9': 'Combo II + I',
         '10': 'Combo III + I',
         '11': 'Combo III + II',
-        'none': 'Class IV (No Bike Facility)'
+        'none': 'Mixed Traffic'
     }
     return subclass_names.get(code, f'Other ({code})')
 
@@ -215,7 +215,7 @@ subclass_palette = {
     'Combo II + III': '#6feea1',             #sickly pale green
     'Combo III + II': '#6feea1',             #sickly pale green
     'Class III (Sharrow)': '#d95f02',        # orange
-    'Class IV (No Bike Facility)': '#969696' # gray
+    'Mixed Traffic': '#969696' # gray
 }
 
 # Build ordered category list and matching color list for explore() legend
@@ -230,8 +230,7 @@ m = summary_edges.explore(
     legend=True,
     style_kwds={'weight': 3.5, 'opacity': 0.9},
     tooltip=['streetname', 'segment_id', 'subclass', 'flow_type', 'facility', 'weight'],
-    tiles='https://arcgisonline.com{z}/{y}/{x}',
-    attr='Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+    tiles='OpenStreetMap',
     prefer_canvas=True
 )
 
