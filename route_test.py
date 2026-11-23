@@ -205,22 +205,31 @@ def get_midpoint_and_angle(geom, reverse=False):
     angle = -math.degrees(math.atan2(dy, dx))
     return (mid_pt.y, mid_pt.x), angle
 
-#draw ONE centered arrow per segment (center=True, repeat=False)
+#add HTML/CSS rotated arrow markers for one-way segments
+one_way_count = 0
 for _, row in summary_edges.iterrows():
     if row['flow_type'] == 'One-Way':
+        one_way_count += 1
         (lat, lon), angle = get_midpoint_and_angle(row.geometry, reverse=bool(row['reversed']))
-        folium.RegularPolygonMarker(
+        icon_html = f'''
+            <div style="
+                transform: rotate({angle:.1f}deg);
+                color: #d62728;
+                font-size: 14px;
+                font-weight: bold;
+                line-height: 14px;
+                text-align: center;
+                text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
+            ">➤</div>
+        '''
+        folium.Marker(
             location=[lat, lon],
-            number_of_sides=3,
-            radius=5,
-            rotation=angle,
-            color='#d62728',
-            fill=True,
-            fill_color='#d62728',
-            fill_opacity=0.9,
-            weight=1
+            icon=folium.DivIcon(
+                icon_size=(14, 14),
+                icon_anchor=(7, 7),
+                html=icon_html
+            )
         ).add_to(m)
-
 
 m.save("directed_network_map.html")
 print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
