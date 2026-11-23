@@ -234,6 +234,16 @@ m = summary_edges.explore(
     prefer_canvas=True
 )
 
+# mute colors of bg
+mute_osm_css = """
+<style>
+.leaflet-tile-pane {
+    filter: grayscale(75%) opacity(75%) contrast(55%);
+}
+</style>
+"""
+m.get_root().html.add_child(folium.Element(mute_osm_css))
+
 #helper to compute bearing angle (in degrees) for a directional triangle marker
 def get_midpoint_and_angle(geom, reverse=False):
     coords = list(geom.coords)
@@ -270,8 +280,8 @@ for _, row in summary_edges.iterrows():
         folium.Marker(
             location=[lat, lon],
             icon=folium.DivIcon(
-                icon_size=(14, 14),
-                icon_anchor=(7, 7),
+                icon_size=(8, 8),
+                icon_anchor=(4, 4),
                 html=icon_html
             )
         ).add_to(m)
