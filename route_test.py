@@ -17,6 +17,11 @@ import os #access system environment
 #reads geometry, attributes, and crs of gpkg
 gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.gpkg")
 
+print("CRS:", gdf.crs)
+print("EPSG:", gdf.crs.to_epsg())
+print("Units:", gdf.crs.axis_info[0].unit_name)
+#EPSG:2263 - NAD83 / New York Long Island (ftUS)
+
 #ensure geometries are strictly single LineStrings (explode MultiLineStrings)
 gdf = gdf[gdf.geometry.type.isin(['LineString', 'MultiLineString'])].explode(index_parts=False)
 
@@ -45,12 +50,12 @@ lane_class_multipliers = {
 }
 
 #map multipliers (default to default street if missing) and calculate final edge weight using length attribute
-gdf['length_m'] = gdf.geometry.length
+gdf['length_ft'] = gdf.geometry.length
 
 #bike and road weights are separate
 gdf['bike_mult'] = gdf['BikeLane'].map(lane_class_multipliers).fillna(class_4_weight)
-gdf['bike_weight'] = gdf['length_m'] * gdf['bike_mult']
-gdf['road_weight'] = gdf['length_m'] * class_4_weight
+gdf['bike_weight'] = gdf['length_ft'] * gdf['bike_mult']
+gdf['road_weight'] = gdf['length_ft'] * class_4_weight
 
 #make graph with NetworkX
 G = nx.DiGraph()
@@ -64,7 +69,7 @@ for idx, row in gdf.iterrows():
     road_dir = str(row.get('TrafDir') or '').strip().upper()
     
     base_attrs = {
-        'length': row['length_m'],
+        'length': row['length_ft'],
         'segment_id': row.get('SegmentID'),
         'geometry': row.geometry
     }
