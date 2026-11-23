@@ -158,11 +158,7 @@ edges_gdf['flow_type'] = dir_counts.map({1: 'One-Way', 2: 'Two-Way'}).fillna('Ot
 
 #restrict to local area (box) and reproject to WGS84 (EPSG:4326) for Leaflet/Folium
 edges_wgs84 = edges_gdf.to_crs(epsg=4326)
-<<<<<<< HEAD
 bbox_edges = edges_wgs84.cx[-74.267937:-73.696085, 40.490691:40.920841].copy()
-=======
-bbox_edges = edges_wgs84.cx[-73.988:-73.972, 40.685:40.697].copy()
->>>>>>> refs/remotes/Bike_Network_Expander/master
 
 #collapse two-way segments into 1 line per physical street for fast rendering
 summary_edges = (
