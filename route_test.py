@@ -141,6 +141,7 @@ edges_data = [
         'v': v,
         'reversed': d['reversed'],
         'segment_id': d.get('segment_id'),
+        'streetname': d.get('streetname'),
         'weight': round(d['weight'], 1),
         'length': round(d['length'], 1),
         'mode': d['mode'],
@@ -166,6 +167,7 @@ summary_edges = (
     .agg({
         'geometry': 'first',
         'flow_type': 'first',
+        'streetname': 'first',
         'mode': lambda x: ' / '.join(dict.fromkeys(x)),
         'facility': lambda x: ' / '.join(dict.fromkeys(x)),
         'weight': lambda x: ' | '.join(map(str, x)),
@@ -184,7 +186,7 @@ m = summary_edges.explore(
     column='mode',
     cmap='Set1',
     style_kwds={'weight': 3, 'opacity': 0.85},
-    tooltip=['segment_id', 'flow_type', 'mode', 'facility', 'weight'],
+    tooltip=['streetname', 'segment_id', 'flow_type', 'mode', 'facility', 'weight'],
     tiles='CartoDB positron',
     prefer_canvas=True
 )
@@ -214,7 +216,7 @@ for _, row in summary_edges.iterrows():
         icon_html = f'''
             <div style="
                 transform: rotate({angle:.1f}deg);
-                color: #d62728;
+                color: #000000;
                 font-size: 14px;
                 font-weight: bold;
                 line-height: 14px;
