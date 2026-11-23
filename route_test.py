@@ -17,4 +17,7 @@ import os #access system environment
 #reads geometry, attributes, and crs of gpkg
 gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.gpkg")
 
+#ensure geometries are strictly single LineStrings (explode MultiLineStrings)
+gdf = gdf[gdf.geometry.type.isin(['LineString', 'MultiLineString'])].explode(index_parts=False)
+
 print(gdf.geom_type.value_counts())
