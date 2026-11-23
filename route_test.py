@@ -149,46 +149,67 @@ edges_data = [
 ]
 edges_gdf = gpd.GeoDataFrame(edges_data, crs=gdf.crs)
 
-# HANDLE DIRECTIONALITY
-#classify each physical segment as one way vs two way in the graph
-#counts how many directed edges exist per segment_id
+#classify each physical segment as One-Way vs Two-Way in the graph
 dir_counts = edges_gdf.groupby('segment_id')['u'].transform('count')
 edges_gdf['flow_type'] = dir_counts.map({1: 'One-Way', 2: 'Two-Way'}).fillna('Other')
 
-#restrict to local area (box)
-#reproject to WGS84 (EPSG:4326) for Leaflet/Folium
+#restrict to local area (box) and reproject to WGS84 (EPSG:4326) for Leaflet/Folium
 edges_wgs84 = edges_gdf.to_crs(epsg=4326)
 bbox_edges = edges_wgs84.cx[-73.988:-73.972, 40.685:40.697].copy()
 
-#create base explore map colored by mode or flow_type
-map = bbox_edges.explore(
+#collapse two-way segments into 1 line per physical street for fast rendering
+summary_edges = (
+    bbox_edges.sort_values('reversed')
+    .groupby('segment_id', as_index=False)
+    .agg({
+        'geometry': 'first',
+        'flow_type': 'first',
+        'mode': lambda x: ' / '.join(dict.fromkeys(x)),
+        'facility': lambda x: ' / '.join(dict.fromkeys(x)),
+        'weight': lambda x: ' | '.join(map(str, x)),
+        'reversed': 'first',
+        'u': 'first',
+        'v': 'first'
+    })
+)
+summary_edges = gpd.GeoDataFrame(summary_edges, geometry='geometry', crs="EPSG:4326")
+
+#simplify geometry slightly (0.00001 deg ≈ 1 meter) to shrink HTML size
+summary_edges['geometry'] = summary_edges['geometry'].simplify(0.00001)
+
+#render the base map (1 polyline per street instead of 2)
+m = summary_edges.explore(
     column='mode',
-    cmap=['#1f77b4', '#999999'],  # Blue = bike_network, Gray = mixed_traffic
+    cmap='Set1',
     style_kwds={'weight': 3, 'opacity': 0.85},
-    tooltip=['segment_id', 'u', 'v', 'flow_type', 'mode', 'facility', 'weight'],
+    tooltip=['segment_id', 'flow_type', 'mode', 'facility', 'weight'],
     tiles='CartoDB positron'
 )
 
-#overlay directional arrows (►) following the u -> v traversal order
-for _, row in bbox_edges.iterrows():
+#draw ONE centered arrow per segment (center=True, repeat=False)
+for _, row in summary_edges.iterrows():
     coords = [(lat, lon) for lon, lat in row.geometry.coords]
-    
-    is_rev = bool(row['reversed'])
-    if is_rev:
-        coords = coords[::-1]
+    color = '#000000'
+    if row['flow_type'] == 'One-Way':
+        if bool(row['reversed']):
+            coords = coords[::-1]
+        symbol = '►'
+    else:
+        symbol = '◄►'
 
-    line = folium.PolyLine(coords, weight=0, opacity=0).add_to(map)
+    line = folium.PolyLine(coords, weight=0, opacity=0).add_to(m)
     PolyLineTextPath(
         line,
-        '   ►   ',
-        repeat=True,
-        offset=-4 if is_rev else 6,
+        symbol,
+        center=True,      #single arrow in the middle of the block (fast!)
+        repeat=False,     #disables heavy repeated SVG text rendering
+        offset=4,
         attributes={
-            'fill': '#d62728' if row['flow_type'] == 'One-Way' else '#2ca02c',
+            'fill': color,
             'font-weight': 'bold',
-            'font-size': '12'
+            'font-size': '13'
         }
-    ).add_to(map)
+    ).add_to(m)
 
-map.save("directed_network_map.html")
+m.save("directed_network_map.html")
 print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
