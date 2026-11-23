@@ -59,7 +59,7 @@ for event, elem in ET.iterparse(extracted_kml, events=("end",)):
         elem.clear()
 
 #create layer for LION database with projected coordinate system
-gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:3857") #use web-mercator projection (3857), not wgs84 (4326)
+gdf = gpd.GeoDataFrame(geometry=records, crs="EPSG:3857") #use web-mercator projection (3857), not wgs84 (4326)
 
 gdf.to_file("lion_bike_lanes.gpkg", driver="GPKG") #make geopackage file, this will be used now
 print(gdf.geom_type.value_counts())
