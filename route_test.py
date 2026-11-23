@@ -158,7 +158,11 @@ edges_gdf['flow_type'] = dir_counts.map({1: 'One-Way', 2: 'Two-Way'}).fillna('Ot
 
 #restrict to local area (box) and reproject to WGS84 (EPSG:4326) for Leaflet/Folium
 edges_wgs84 = edges_gdf.to_crs(epsg=4326)
+<<<<<<< HEAD
 bbox_edges = edges_wgs84.cx[-74.267937:-73.696085, 40.490691:40.920841].copy()
+=======
+bbox_edges = edges_wgs84.cx[-73.988:-73.972, 40.685:40.697].copy()
+>>>>>>> refs/remotes/Bike_Network_Expander/master
 
 #collapse two-way segments into 1 line per physical street for fast rendering
 summary_edges = (
@@ -234,6 +238,7 @@ m = summary_edges.explore(
     prefer_canvas=True
 )
 
+<<<<<<< HEAD
 # mute colors of bg
 mute_osm_css = """
 <style>
@@ -244,6 +249,8 @@ mute_osm_css = """
 """
 m.get_root().html.add_child(folium.Element(mute_osm_css))
 
+=======
+>>>>>>> refs/remotes/Bike_Network_Expander/master
 #helper to compute bearing angle (in degrees) for a directional triangle marker
 def get_midpoint_and_angle(geom, reverse=False):
     coords = list(geom.coords)
@@ -270,18 +277,31 @@ for _, row in summary_edges.iterrows():
             <div style="
                 transform: rotate({angle:.1f}deg);
                 color: #000000;
+<<<<<<< HEAD
                 font-size: 12px;
                 font-weight: bold;
                 line-height: 12px;
                 text-align: center;
                 text-shadow: -.75px -.75px 0 #fff, .75px -.75px 0 #fff, -.75px .75px 0 #fff, .75px .75px 0 #fff;
+=======
+                font-size: 14px;
+                font-weight: bold;
+                line-height: 14px;
+                text-align: center;
+                text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
+>>>>>>> refs/remotes/Bike_Network_Expander/master
             ">➤</div>
         '''
         folium.Marker(
             location=[lat, lon],
             icon=folium.DivIcon(
+<<<<<<< HEAD
                 icon_size=(12, 12),
                 icon_anchor=(6, 6),
+=======
+                icon_size=(14, 14),
+                icon_anchor=(7, 7),
+>>>>>>> refs/remotes/Bike_Network_Expander/master
                 html=icon_html
             )
         ).add_to(m)
