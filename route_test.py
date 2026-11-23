@@ -13,6 +13,10 @@ import zipfile #unzip KMZ into KML
 
 import os #access system environment
 
+import folium
+from folium.plugins import PolyLineTextPath #create visuals/map for directional streets
+#MUST PIP INSTALL FOLIUM, MATPLOTLIB, MAPCLASSIFY IN TERMINAL
+
 #create layer for LION database with projected coordinate system
 #reads geometry, attributes, and crs of gpkg
 gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.gpkg")
@@ -76,15 +80,15 @@ for idx, row in gdf.iterrows():
 
     #direction 1: forward (from -> to segments) 
     if bike_dir in ('FT', 'TW'):
-        G.add_edge(u, v, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
+        G.add_edge(u, v, reversed=False, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
     elif road_dir in ('W', 'T', 'P'):
-        G.add_edge(u, v, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
+        G.add_edge(u, v, reversed=False, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
 
     #direction 2: reverse (to -> from segments) 
     if bike_dir in ('TF', 'TW'):
-        G.add_edge(v, u, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
+        G.add_edge(v, u, reversed=True, streetname=row.get('Street'), weight=row['bike_weight'], facility=row.get('BikeLane'), mode='bike_network', **base_attrs)
     elif road_dir in ('A', 'T', 'P'):
-        G.add_edge(v, u, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
+        G.add_edge(v, u, reversed=True, streetname=row.get('Street'), weight=row['road_weight'], facility='none', mode='mixed_traffic', **base_attrs)
 
 #apprx 183k linestrings
 print(gdf.geom_type.value_counts())
@@ -119,3 +123,72 @@ print("--------PROTECTED BIKE EDGES--------")
 protected_bike_edges = [(u, v, d) for u, v, d in G.edges(data=True) if (d['mode'] == 'bike_network' and d['facility'] == ' 1')][:5]
 for u, v, d in protected_bike_edges:
     print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
+print("--------BOND ST EDGES--------")
+
+bond_check = [(u, v, d) for u, v, d in G.edges(data=True) if ('BOND' in d['streetname'].upper())][:200]
+for u, v, d in bond_check:
+    print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
+#CREATE WEB VISUAL
+
+#extract directed edges from NetworkX back into GeoDataFrame
+edges_data = [
+    {
+        'u': u,
+        'v': v,
+        'reversed': d['reversed'],
+        'segment_id': d.get('segment_id'),
+        'weight': round(d['weight'], 1),
+        'length': round(d['length'], 1),
+        'mode': d['mode'],
+        'facility': str(d['facility']).strip() if d['facility'] is not None else 'none',
+        'geometry': d['geometry']
+    }
+    for u, v, d in G.edges(data=True)
+]
+edges_gdf = gpd.GeoDataFrame(edges_data, crs=gdf.crs)
+
+# HANDLE DIRECTIONALITY
+#classify each physical segment as one way vs two way in the graph
+#counts how many directed edges exist per segment_id
+dir_counts = edges_gdf.groupby('segment_id')['u'].transform('count')
+edges_gdf['flow_type'] = dir_counts.map({1: 'One-Way', 2: 'Two-Way'}).fillna('Other')
+
+#restrict to local area (box)
+#reproject to WGS84 (EPSG:4326) for Leaflet/Folium
+edges_wgs84 = edges_gdf.to_crs(epsg=4326)
+bbox_edges = edges_wgs84.cx[-73.988:-73.972, 40.685:40.697].copy()
+
+#create base explore map colored by mode or flow_type
+map = bbox_edges.explore(
+    column='mode',
+    cmap=['#1f77b4', '#999999'],  # Blue = bike_network, Gray = mixed_traffic
+    style_kwds={'weight': 3, 'opacity': 0.85},
+    tooltip=['segment_id', 'u', 'v', 'flow_type', 'mode', 'facility', 'weight'],
+    tiles='CartoDB positron'
+)
+
+#overlay directional arrows (►) following the u -> v traversal order
+for _, row in bbox_edges.iterrows():
+    coords = [(lat, lon) for lon, lat in row.geometry.coords]
+    
+    is_rev = bool(row['reversed'])
+    if is_rev:
+        coords = coords[::-1]
+
+    line = folium.PolyLine(coords, weight=0, opacity=0).add_to(map)
+    PolyLineTextPath(
+        line,
+        '   ►   ',
+        repeat=True,
+        offset=-4 if is_rev else 6,
+        attributes={
+            'fill': '#d62728' if row['flow_type'] == 'One-Way' else '#2ca02c',
+            'font-weight': 'bold',
+            'font-size': '12'
+        }
+    ).add_to(map)
+
+map.save("directed_network_map.html")
+print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
