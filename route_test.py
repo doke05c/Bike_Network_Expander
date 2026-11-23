@@ -9,13 +9,15 @@ from shapely.geometry import LineString
 
 import zipfile #unzip KMZ into KML
 
+import os #access system environment
+
+os.environ["OGR_KML_MAX_XML_SIZE"] = "0" #remove KML/KMZ max size
 
 #extract KML from KMZ, load into geopandas
 kmz_path = "NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.kmz"
 with zipfile.ZipFile(kmz_path, 'r') as zipped:
     kml_filename = [file for file in zipped.namelist() if file.endswith('.kml')][0]
-    with zipped.open(kml_filename) as kml_file:
-        gdf = gpd.read_file(kml_file, driver='KML')
+    extracted_kml = zipped.extract(kml_filename) #extract KML into direct file into directory
 
-
+gdf = gpd.read_file(extracted_kml, use_arrow=True)
 print(gdf.geom_type.value_counts())
