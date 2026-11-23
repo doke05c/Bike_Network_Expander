@@ -17,6 +17,8 @@ import folium
 from folium.plugins import PolyLineTextPath #create visuals/map for directional streets
 #MUST PIP INSTALL FOLIUM, MATPLOTLIB, MAPCLASSIFY IN TERMINAL
 
+import math #calculate angles/trig
+
 #create layer for LION database with projected coordinate system
 #reads geometry, attributes, and crs of gpkg
 gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.gpkg")
@@ -183,33 +185,42 @@ m = summary_edges.explore(
     cmap='Set1',
     style_kwds={'weight': 3, 'opacity': 0.85},
     tooltip=['segment_id', 'flow_type', 'mode', 'facility', 'weight'],
-    tiles='CartoDB positron'
+    tiles='CartoDB positron',
+    prefer_canvas=True
 )
+
+#helper to compute bearing angle (in degrees) for a directional triangle marker
+def get_midpoint_and_angle(geom, reverse=False):
+    coords = list(geom.coords)
+    if reverse:
+        coords = coords[::-1]
+    #find midpoint along the line
+    mid_pt = geom.interpolate(0.5, normalized=True)
+    #use start -> end vector for clean arrow orientation
+    lon1, lat1 = coords[0]
+    lon2, lat2 = coords[-1]
+    dx = (lon2 - lon1) * math.cos(math.radians(lat1))
+    dy = lat2 - lat1
+    #leaflet RegularPolygonMarker rotation: 0 deg points East, 90 points South
+    angle = -math.degrees(math.atan2(dy, dx))
+    return (mid_pt.y, mid_pt.x), angle
 
 #draw ONE centered arrow per segment (center=True, repeat=False)
 for _, row in summary_edges.iterrows():
-    coords = [(lat, lon) for lon, lat in row.geometry.coords]
-    color = '#000000'
     if row['flow_type'] == 'One-Way':
-        if bool(row['reversed']):
-            coords = coords[::-1]
-        symbol = '►'
-    else:
-        symbol = '◄►'
+        (lat, lon), angle = get_midpoint_and_angle(row.geometry, reverse=bool(row['reversed']))
+        folium.RegularPolygonMarker(
+            location=[lat, lon],
+            number_of_sides=3,
+            radius=5,
+            rotation=angle,
+            color='#d62728',
+            fill=True,
+            fill_color='#d62728',
+            fill_opacity=0.9,
+            weight=1
+        ).add_to(m)
 
-    line = folium.PolyLine(coords, weight=0, opacity=0).add_to(m)
-    PolyLineTextPath(
-        line,
-        symbol,
-        center=True,      #single arrow in the middle of the block (fast!)
-        repeat=False,     #disables heavy repeated SVG text rendering
-        offset=4,
-        attributes={
-            'fill': color,
-            'font-weight': 'bold',
-            'font-size': '13'
-        }
-    ).add_to(m)
 
 m.save("directed_network_map.html")
 print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
