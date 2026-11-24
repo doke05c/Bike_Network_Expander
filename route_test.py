@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET #process and build XML documents (parent clas
 import geopandas as gpd #works out geometry of kml file, loads data
 #MUST PIP INSTALL GEOPANDAS IN TERMINAL
 
+import shapely
 from shapely.geometry import LineString, MultiLineString #import both types of Lines, multi and single
 #MUST PIP INSTALL SHAPELY IN TERMINAL
 
@@ -21,7 +22,7 @@ import math #calculate angles/trig
 
 #create layer for LION database with projected coordinate system
 #reads geometry, attributes, and crs of gpkg
-gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_22_2026.gpkg")
+gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_23_2026.gpkg")
 
 print("CRS:", gdf.crs)
 print("EPSG:", gdf.crs.to_epsg())
@@ -30,6 +31,16 @@ print("Units:", gdf.crs.axis_info[0].unit_name)
 
 #ensure geometries are strictly single LineStrings (explode MultiLineStrings)
 gdf = gdf[gdf.geometry.type.isin(['LineString', 'MultiLineString'])].explode(index_parts=False)
+
+#restrict columns to only necessary 
+keep_cols = [
+    'Street', 'SegmentID', 'NodeIDFrom', 'NodeIDTo',
+    'TrafDir', 'BikeLane', 'BIKE_TRAFDIR',
+    'POSTED_SPEED', 'Number_Travel_Lanes', 'StreetWidth_Min',
+    'RW_TYPE', 'SegmentTyp', 'LBoro',
+    'geometry'
+]
+gdf = gdf[keep_cols]
 
 #SET BASE WEIGHTS, SUBJECT TO CHANGE
 class_1_weight = 1.0 #class I bike lanes (full PBLs) are 'weight-free': they do not carry any added "difficulty" in moving thru the network
@@ -181,6 +192,9 @@ summary_edges = gpd.GeoDataFrame(summary_edges, geometry='geometry', crs="EPSG:4
 #simplify geometry slightly (0.00001 deg ≈ 1 meter) to shrink HTML size
 summary_edges['geometry'] = summary_edges['geometry'].simplify(0.00001)
 
+#simplify precision to reduce decimal counts
+summary_edges['geometry'] = shapely.set_precision(summary_edges['geometry'], grid_size=0.00001)
+
 def label_subclass(fac_str):
     #extract the primary bike facility code if present (ignore 'none' unless both directions are 'none')
     parts = [p.strip() for p in fac_str.split('/') if p.strip() != 'none'] #remove silly spacing
@@ -245,46 +259,58 @@ mute_osm_css = """
 m.get_root().html.add_child(folium.Element(mute_osm_css))
 
 #helper to compute bearing angle (in degrees) for a directional triangle marker
-def get_midpoint_and_angle(geom, reverse=False):
+def make_arrow_geom(geom, reverse=False, size_deg=0.00009):
     coords = list(geom.coords)
     if reverse:
         coords = coords[::-1]
-    #find midpoint along the line
-    mid_pt = geom.interpolate(0.5, normalized=True)
-    #use start -> end vector for clean arrow orientation
+    
+    # Midpoint in WGS84 (lon, lat)
+    mid = geom.interpolate(0.5, normalized=True)
+    if mid.is_empty:
+        return None
+    mx, my = mid.x, mid.y
+    
+    # Segment direction angle
     lon1, lat1 = coords[0]
     lon2, lat2 = coords[-1]
-    dx = (lon2 - lon1) * math.cos(math.radians(lat1))
+    dx = (lon2 - lon1) * math.cos(math.radians(my))
     dy = lat2 - lat1
-    #leaflet RegularPolygonMarker rotation: 0 deg points East, 90 points South
-    angle = -math.degrees(math.atan2(dy, dx))
-    return (mid_pt.y, mid_pt.x), angle
+    if dx == 0 and dy == 0:
+        return None
+    angle = math.atan2(dy, dx)
 
-#add HTML/CSS rotated arrow markers for one-way segments
-one_way_count = 0
-for _, row in summary_edges.iterrows():
-    if row['flow_type'] == 'One-Way':
-        one_way_count += 1
-        (lat, lon), angle = get_midpoint_and_angle(row.geometry, reverse=bool(row['reversed']))
-        icon_html = f'''
-            <div style="
-                transform: rotate({angle:.1f}deg);
-                color: #000000;
-                font-size: 12px;
-                font-weight: bold;
-                line-height: 12px;
-                text-align: center;
-                text-shadow: -.75px -.75px 0 #fff, .75px -.75px 0 #fff, -.75px .75px 0 #fff, .75px .75px 0 #fff;
-            ">➤</div>
-        '''
-        folium.Marker(
-            location=[lat, lon],
-            icon=folium.DivIcon(
-                icon_size=(12, 12),
-                icon_anchor=(6, 6),
-                html=icon_html
-            )
-        ).add_to(m)
+    # Two wings of the arrowhead angled +/- 145 degrees back from travel direction
+    wing1_angle = angle + math.radians(145)
+    wing2_angle = angle - math.radians(145)
+    
+    cos_lat = math.cos(math.radians(my))
+    p1 = (mx + (size_deg * math.cos(wing1_angle)) / cos_lat, my + size_deg * math.sin(wing1_angle))
+    p2 = (mx + (size_deg * math.cos(wing2_angle)) / cos_lat, my + size_deg * math.sin(wing2_angle))
+    
+    return LineString([p1, (mx, my), p2])
+
+#filter strictly to One-Way segments inside your bounding box
+one_way_df = summary_edges[summary_edges['flow_type'] == 'One-Way'].copy()
+# print(f"Generating arrowheads for {len(one_way_df)} one-way segments in bbox...")
+
+#build a single lightweight GeoDataFrame of all arrowheads
+arrow_geoms = [
+    make_arrow_geom(row.geometry, reverse=bool(row['reversed']))
+    for _, row in one_way_df.iterrows()
+]
+arrows_gdf = gpd.GeoDataFrame(geometry=arrow_geoms, crs="EPSG:4326")
+
+#simplify precision to reduce decimal counts
+arrows_gdf['geometry'] = shapely.set_precision(arrows_gdf['geometry'], grid_size=0.00001)
+
+
+#overlay all arrowheads onto map in one single GeoJSON
+arrows_gdf.explore(
+    m=m,
+    color='#111111',
+    style_kwds={'weight': 2.5, 'opacity': 0.95},
+    tooltip=False
+)
 
 m.save("directed_network_map.html")
 print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
