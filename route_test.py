@@ -68,8 +68,8 @@ lane_class_multipliers = {
     # NO SEGMENTS OF SUB-CLASS 7, NO WEIGHT SYSTEM ASSIGNED
     ' 8': class_1_weight * 0.75 + class_3_weight * 0.25, #combo class I and III
     ' 9': class_1_weight * 0.5 + class_2_weight * 0.5, #combo class II and I
-    ' 10': class_1_weight * 0.75 + class_2_weight * 0.25, #combo class III and I
-    ' 11': class_2_weight * 0.5 + class_3_weight * 0.5, #combo class III and II
+    '10': class_1_weight * 0.75 + class_3_weight * 0.25, #combo class III and I
+    '11': class_2_weight * 0.5 + class_3_weight * 0.5, #combo class III and II
 }
 
 #map multipliers (default to default street if missing) and calculate final edge weight using length attribute
@@ -148,6 +148,13 @@ print("--------BOND ST EDGES--------")
 bond_check = [(u, v, d) for u, v, d in G.edges(data=True) if ('BOND' in d['streetname'].upper())][:200]
 for u, v, d in bond_check:
     print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
+print("--------BIKE BLVD EDGES--------")
+
+protected_bike_edges = [(u, v, d) for u, v, d in G.edges(data=True) if (d['mode'] == 'bike_network' and ((d['facility'] == ' 8') or (d['facility'] == '10')))]
+for u, v, d in protected_bike_edges:
+    print(f"{u} -> {v} | name: {repr(d['streetname'])} | facility: {repr(d['facility'])} | length: {d['length']:.1f} | weight: {d['weight']:.1f}")
+
 
 #CREATE WEB VISUAL
 
