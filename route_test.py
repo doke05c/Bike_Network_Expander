@@ -247,6 +247,26 @@ summary_edges['color'] = summary_edges['subclass'].map(subclass_palette).apply(
     lambda c: c if isinstance(c, list) else [100, 100, 100]
 )
 
+class_1_thickness = 35 #set anchor thickness to class I lanes
+
+#create width map for each lane type
+width_map = {
+    'Class I (Protected)': class_1_thickness,     #thickest highlight for protected bike lanes
+    'Combo I + II': class_1_thickness * 0.67,
+    'Combo II + I': class_1_thickness * 0.67,
+    'Combo I + III': class_1_thickness * 0.76,
+    'Combo III + I': class_1_thickness * 0.76,
+    'Class II (Painted Lane)': class_1_thickness * 0.43,
+    'Class II (Ped Bridge)': class_1_thickness * 0.43,
+    'Combo II + III': class_1_thickness * 0.33,
+    'Combo III + II': class_1_thickness * 0.33,
+    'Class III (Sharrow)': class_1_thickness * 0.26,
+    'Mixed Traffic': class_1_thickness * 0.15
+}
+
+#create width based on mapping above
+summary_edges['width'] = summary_edges['subclass'].map(width_map).fillna(2)
+
 #build path edges with restricted precision for PDK
 decimal_count = 5
 summary_edges['path'] = summary_edges.geometry.apply(
@@ -278,14 +298,17 @@ arrows_df = pd.DataFrame(arrow_records)
 #build WebGL Layers
 
 #line layer
+#draw thinner mixed-traffic streets underneath and thick protected lanes on top
+summary_edges = summary_edges.sort_values('width', ascending=True)
+
 path_layer = pdk.Layer(
     "PathLayer",
-    data=summary_edges[['path', 'color', 'streetname', 'subclass', 'flow_type', 'weight']],
+    data=summary_edges[['path', 'color', 'width', 'streetname', 'subclass', 'flow_type', 'weight']],
     get_path="path",
     get_color="color",
-    get_width=3,
-    width_min_pixels=1.5,
-    width_max_pixels=6,
+    get_width="width",  #uses info above from width map
+    width_min_pixels=1.2,
+    width_max_pixels=10,
     pickable=True,
     auto_highlight=True
 )
