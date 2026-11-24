@@ -229,17 +229,17 @@ summary_edges['subclass'] = summary_edges['facility'].apply(label_subclass)
 #NOTE: PDK MAY NOT LIKE HEX CODES, TRY RGB IF HEX FAILS
 # Assign distinct colors to each subclass present in the bounding box
 subclass_palette = {
-    'Class I (Protected)': '#006d2c',        #dark green
-    'Combo I + II': '#2ca25f',               #medium green
-    'Combo II + I': '#2ca25f',               #medium green
-    'Combo I + III': '#2d8421',              #medium-dark green !
-    'Combo III + I': '#2d8421',              #medium-dark green !
-    'Class II (Painted Lane)': '#00ee5f',    #light green
-    'Class II (Ped Bridge)': '#00ee5f',      #light green
-    'Combo II + III': '#6feea1',             #sickly pale green
-    'Combo III + II': '#6feea1',             #sickly pale green
-    'Class III (Sharrow)': '#d95f02',        # orange
-    'Mixed Traffic': '#969696' # gray
+    'Class I (Protected)': [0, 109, 44],        # dark green
+    'Combo I + II': [44, 162, 95],              # medium green
+    'Combo II + I': [44, 162, 95],              # medium green
+    'Combo I + III': [45, 132, 33],             # medium-dark green
+    'Combo III + I': [45, 132, 33],             # medium-dark green
+    'Class II (Painted Lane)': [0, 238, 95],    # light green
+    'Class II (Ped Bridge)': [0, 238, 95],      # light green
+    'Combo II + III': [111, 238, 161],          # sickly pale green
+    'Combo III + II': [111, 238, 161],          # sickly pale green
+    'Class III (Sharrow)': [217, 95, 2],        # orange
+    'Mixed Traffic': [150, 150, 150],           # gray
 }
 
 #build colors for summary edges, gray defaults
