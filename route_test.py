@@ -20,6 +20,12 @@ from folium.plugins import PolyLineTextPath #create visuals/map for directional 
 
 import math #calculate angles/trig
 
+import pydeck as pdk #switched to pydeck to render arrows/line objects to html, should be more space-efficient
+#MUST PIP INSTALL PYDECK
+
+import pandas as pd #manip and edit tabular data
+#MUST PIP INSTALL PANDAS
+
 #create layer for LION database with projected coordinate system
 #reads geometry, attributes, and crs of gpkg
 gdf = gpd.read_file("NYC_Bike_Lanes_in_Full_LION_Network_edited_for_URBP7873D_Nov_23_2026.gpkg")
@@ -189,6 +195,9 @@ summary_edges = (
 )
 summary_edges = gpd.GeoDataFrame(summary_edges, geometry='geometry', crs="EPSG:4326")
 
+#remove edges without geometry
+summary_edges = summary_edges[~summary_edges.geometry.is_empty].copy()
+
 #simplify geometry slightly (0.00001 deg ≈ 1 meter) to shrink HTML size
 summary_edges['geometry'] = summary_edges['geometry'].simplify(0.00001)
 
@@ -217,6 +226,7 @@ def label_subclass(fac_str):
 
 summary_edges['subclass'] = summary_edges['facility'].apply(label_subclass)
 
+#NOTE: PDK MAY NOT LIKE HEX CODES, TRY RGB IF HEX FAILS
 # Assign distinct colors to each subclass present in the bounding box
 subclass_palette = {
     'Class I (Protected)': '#006d2c',        #dark green
@@ -232,85 +242,79 @@ subclass_palette = {
     'Mixed Traffic': '#969696' # gray
 }
 
-# Build ordered category list and matching color list for explore() legend
-present_classes = sorted(summary_edges['subclass'].unique())
-colors = [subclass_palette.get(c, '#000000') for c in present_classes]
-
-#render the base map (1 polyline per street instead of 2)
-m = summary_edges.explore(
-    column='subclass',
-    categories=present_classes,
-    cmap=colors,
-    legend=True,
-    style_kwds={'weight': 3.5, 'opacity': 0.9},
-    tooltip=['streetname', 'segment_id', 'subclass', 'flow_type', 'facility', 'weight'],
-    tiles='OpenStreetMap',
-    prefer_canvas=True
+#build colors for summary edges, gray defaults
+summary_edges['color'] = summary_edges['subclass'].map(subclass_palette).apply(
+    lambda c: c if isinstance(c, list) else [100, 100, 100]
 )
 
-# mute colors of bg
-mute_osm_css = """
-<style>
-.leaflet-tile-pane {
-    filter: grayscale(75%) opacity(75%) contrast(55%);
-}
-</style>
-"""
-m.get_root().html.add_child(folium.Element(mute_osm_css))
+#build path edges with restricted precision for PDK
+decimal_count = 5
+summary_edges['path'] = summary_edges.geometry.apply(
+    lambda g: [[round(x, decimal_count), round(y, decimal_count)] for x, y in g.coords]
+)
 
-#helper to compute bearing angle (in degrees) for a directional triangle marker
-def make_arrow_geom(geom, reverse=False, size_deg=0.00009):
-    coords = list(geom.coords)
-    if reverse:
-        coords = coords[::-1]
-    
-    # Midpoint in WGS84 (lon, lat)
-    mid = geom.interpolate(0.5, normalized=True)
-    if mid.is_empty:
+#extract midpoint & bearing angle for one-way directional arrows citywide
+one_way = summary_edges[summary_edges['flow_type'] == 'One-Way'].copy()
+
+def get_arrow_data(row):
+    coords = row['path']
+    if len(coords) < 2:
         return None
-    mx, my = mid.x, mid.y
-    
-    # Segment direction angle
+    if row['reversed']:
+        coords = coords[::-1]
+    mid_idx = len(coords) // 2
+    mx, my = coords[mid_idx]
     lon1, lat1 = coords[0]
     lon2, lat2 = coords[-1]
     dx = (lon2 - lon1) * math.cos(math.radians(my))
     dy = lat2 - lat1
-    if dx == 0 and dy == 0:
-        return None
-    angle = math.atan2(dy, dx)
+    #deck.gl TextLayer angle: counter-clockwise degrees from east
+    angle = math.degrees(math.atan2(dy, dx))
+    return {'pos': [mx, my], 'angle': round(angle, 1)}
 
-    # Two wings of the arrowhead angled +/- 145 degrees back from travel direction
-    wing1_angle = angle + math.radians(145)
-    wing2_angle = angle - math.radians(145)
-    
-    cos_lat = math.cos(math.radians(my))
-    p1 = (mx + (size_deg * math.cos(wing1_angle)) / cos_lat, my + size_deg * math.sin(wing1_angle))
-    p2 = (mx + (size_deg * math.cos(wing2_angle)) / cos_lat, my + size_deg * math.sin(wing2_angle))
-    
-    return LineString([p1, (mx, my), p2])
+arrow_records = [r for r in one_way.apply(get_arrow_data, axis=1) if r is not None]
+arrows_df = pd.DataFrame(arrow_records)
 
-#filter strictly to One-Way segments inside your bounding box
-one_way_df = summary_edges[summary_edges['flow_type'] == 'One-Way'].copy()
-# print(f"Generating arrowheads for {len(one_way_df)} one-way segments in bbox...")
+#build WebGL Layers
 
-#build a single lightweight GeoDataFrame of all arrowheads
-arrow_geoms = [
-    make_arrow_geom(row.geometry, reverse=bool(row['reversed']))
-    for _, row in one_way_df.iterrows()
-]
-arrows_gdf = gpd.GeoDataFrame(geometry=arrow_geoms, crs="EPSG:4326")
-
-#simplify precision to reduce decimal counts
-arrows_gdf['geometry'] = shapely.set_precision(arrows_gdf['geometry'], grid_size=0.00001)
-
-
-#overlay all arrowheads onto map in one single GeoJSON
-arrows_gdf.explore(
-    m=m,
-    color='#111111',
-    style_kwds={'weight': 2.5, 'opacity': 0.95},
-    tooltip=False
+#line layer
+path_layer = pdk.Layer(
+    "PathLayer",
+    data=summary_edges[['path', 'color', 'streetname', 'subclass', 'flow_type', 'weight']],
+    get_path="path",
+    get_color="color",
+    get_width=3,
+    width_min_pixels=1.5,
+    width_max_pixels=6,
+    pickable=True,
+    auto_highlight=True
 )
 
-m.save("directed_network_map.html")
-print(f"Saved {len(bbox_edges)} directed edges to directed_network_map.html")
+#arrow layer
+arrow_layer = pdk.Layer(
+    "TextLayer",
+    data=arrows_df,
+    get_position="pos",
+    get_text="'➤'",
+    get_angle="angle",
+    get_size=12,
+    get_color=[20, 20, 20, 220],
+    size_units="'pixels'",
+    billboard=False  #keeps arrows flat on the map plane so they rotate with streets
+)
+
+#render citywide map with muted Carto Positron basemap (built into pydeck w/o key needed)
+view_state = pdk.ViewState(latitude=40.7128, longitude=-73.9600, zoom=11, pitch=0)
+deck = pdk.Deck(
+    layers=[path_layer, arrow_layer],
+    initial_view_state=view_state,
+    map_style="light",
+    tooltip={
+        #muted, greyed out, low opacity background
+        "html": "<b>{streetname}</b><br/>Class: {subclass}<br/>Flow: {flow_type}<br/>Weight: {weight}",
+        "style": {"backgroundColor": "white", "color": "black", "fontSize": "12px"}
+    }
+)
+
+deck.to_html("nyc_directed_network.html")
+print(f"Saved citywide WebGL map with {len(summary_edges)} segments and {len(arrows_df)} arrows.")
