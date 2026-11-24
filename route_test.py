@@ -316,5 +316,61 @@ deck = pdk.Deck(
     }
 )
 
-deck.to_html("nyc_directed_network.html")
+output_file = "nyc_directed_network.html"
+
+deck.to_html(output_file)
 print(f"Saved citywide WebGL map with {len(summary_edges)} segments and {len(arrows_df)} arrows.")
+
+#define legend items
+legend_items = [
+    ("#006d2c", "Class I (Protected)"),
+    ("#2d8421", "Combo I + III (Bike Boulevard)"),
+    ("#2ca25f", "Combo I + II (Protected w/ Painted Sections)"),
+    ("#00ee5f", "Class II (Painted / Ped Bridge)"),
+    ("#6feea1", "Combo II + III (Painted w/ Sharrow Sections)"),
+    ("#d95f02", "Class III (Sharrow)"),
+    ("#969696", "Mixed Traffic (Class IV)"),
+]
+
+rows_html = "".join(
+    f'<div style="display:flex;align-items:center;margin-bottom:5px;">'
+    f'<span style="display:inline-block;width:16px;height:4px;background:{hex_col};margin-right:8px;border-radius:1px;"></span>'
+    f'<span>{label}</span></div>'
+    for hex_col, label in legend_items
+)
+
+legend_html = f"""
+<div id="map-legend" style="
+    position: fixed;
+    bottom: 24px;
+    left: 24px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.92);
+    padding: 12px 14px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    color: #222;
+    line-height: 1.4;
+    pointer-events: auto;
+">
+    <div style="font-weight: 600; margin-bottom: 8px; font-size: 13px;">NYC Bike Network Classes</div>
+    {rows_html}
+    <div style="border-top: 1px solid #ddd; margin-top: 7px; padding-top: 6px; display:flex; align-items:center;">
+        <span style="font-weight:bold; margin-right:8px; font-size:13px;">➤</span>
+        <span>One-Way Travel Direction</span>
+    </div>
+</div>
+"""
+
+# Inject the legend right before </body> in the generated HTML file
+with open(output_file, "r", encoding="utf-8") as f:
+    html_content = f.read()
+
+html_content = html_content.replace("</body>", f"{legend_html}\n</body>")
+
+with open(output_file, "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print(f"Added corner legend to {output_file}")
