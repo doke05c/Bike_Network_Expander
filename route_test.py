@@ -434,7 +434,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
     <label for="radiusNum" id="radiusLabel"><b>Weight radius</b></label>
     <span><input type="number" id="radiusNum" min="0" step="250" value="10000"> pts</span>
   </div>
-  <input type="range" id="radiusRange" min="0" max="60000" step="250" value="10000">
+  <input type="range" id="radiusRange" min="0" max="100000" step="250" value="10000">
 
   <div class="row">
     <label><input type="checkbox" id="oneway" checked> Obey one-way directions</label>
