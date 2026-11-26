@@ -396,12 +396,16 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>NYC Bike Network - Weight Radius Explorer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bike Network Expander: The Bikeable Radius</title>
+<meta name="description" content="Begin exploring how infrastructural inequities plague New York City's cycling network, by seeing how far you could comfortably ride around your area.">
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@3/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3/dist/maplibre-gl.js"></script>
 <style>
-  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  html, body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  #topbar { position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 2000; box-sizing: border-box;
+            padding: 10px 16px; font-size: 14px; background: #fff; border-bottom: 1px solid #ddd; }
+  #stage { position: fixed; top: 40px; left: 0; right: 0; bottom: 0; }
   #map { position: absolute; inset: 0; }
   #panel {
     position: absolute; top: 16px; left: 16px; z-index: 1000; width: 270px;
@@ -423,38 +427,43 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="map"></div>
-<div id="tip"></div>
+<div id="topbar"><a href="/index">&larr; Back to Blog Homepage</a></div>
 
-<div id="panel">
-  <h3>Weight-radius explorer</h3>
-  <div class="muted" id="hint">Loading network...</div>
+<div id="stage">
 
-  <div class="row">
-    <label for="radiusNum" id="radiusLabel"><b>Weight radius</b></label>
-    <span><input type="number" id="radiusNum" min="0" step="250" value="10000"> pts</span>
-  </div>
-  <input type="range" id="radiusRange" min="0" max="100000" step="250" value="10000">
+  <div id="map"></div>
+  <div id="tip"></div>
 
-  <div class="row">
-    <label><input type="checkbox" id="oneway" checked> Obey one-way directions</label>
+  <div id="panel">
+    <h3>Weight-radius explorer</h3>
+    <div class="muted" id="hint">Loading network...</div>
+
+    <div class="row">
+      <label for="radiusNum" id="radiusLabel"><b>Weight radius</b></label>
+      <span><input type="number" id="radiusNum" min="0" step="250" value="10000"> pts</span>
+    </div>
+    <input type="range" id="radiusRange" min="0" max="100000" step="250" value="10000">
+
+    <div class="row">
+      <label><input type="checkbox" id="oneway" checked> Obey one-way directions</label>
+    </div>
+    <div class="row">
+      <label for="coreMode">Lit line color</label>
+      <select id="coreMode"><option value="class">Class colors</option><option value="solid">Highlight color</option></select>
+    </div>
+    <div class="row">
+      <label for="color">Halo / highlight color</label>
+      <input type="color" id="color" value="#e6007a">
+    </div>
+    <div class="row">
+      <button id="clear">Remove pin</button>
+    </div>
+    <div id="stats"></div>
+    <div id="classes"></div>
   </div>
-  <div class="row">
-    <label for="coreMode">Lit line color</label>
-    <select id="coreMode"><option value="class">Class colors</option><option value="solid">Highlight color</option></select>
-  </div>
-  <div class="row">
-    <label for="color">Halo / highlight color</label>
-    <input type="color" id="color" value="#e6007a">
-  </div>
-  <div class="row">
-    <button id="clear">Remove pin</button>
-  </div>
-  <div id="stats"></div>
-  <div id="classes"></div>
+
+  __LEGEND_HTML__
 </div>
-
-__LEGEND_HTML__
 
 <script>
 const D = __DATA_JSON__;
@@ -679,6 +688,7 @@ const map = new maplibregl.Map({
   center: [-73.96, 40.7128], zoom: 11
 });
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
+new ResizeObserver(() => map.resize()).observe($('stage'));
 
 let ready = false, pin = null, marker = null, queued = false, dragging = false, hoverSeg = -1, hoverQueued = false, lastMouse = null;
 const budget = () => Math.max(0, parseFloat($('radiusNum').value) || 0);
