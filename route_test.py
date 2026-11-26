@@ -427,7 +427,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="topbar"><a href="/index">&larr; Back to Blog Homepage</a></div>
+<div id="topbar"><b><a href="/index">&larr; Back to Blog Homepage</a></b></div>
 
 <div id="stage">
 
