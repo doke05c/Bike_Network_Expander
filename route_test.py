@@ -7,7 +7,8 @@ import geopandas as gpd #works out geometry of kml file, loads data
 #MUST PIP INSTALL GEOPANDAS IN TERMINAL
 
 import shapely
-from shapely.geometry import LineString, MultiLineString #import both types of Lines, multi and single
+from shapely.geometry import Point, LineString, MultiLineString #import both types of Lines, multi and single
+                                                                #import Point
 #MUST PIP INSTALL SHAPELY IN TERMINAL
 
 import zipfile #unzip KMZ into KML
@@ -302,54 +303,54 @@ def get_arrow_data(row):
 arrow_records = [r for r in one_way.apply(get_arrow_data, axis=1) if r is not None]
 arrows_df = pd.DataFrame(arrow_records)
 
-#build WebGL Layers
+#--------------------------------------------------------------------------
+#INTERACTIVE WEIGHT-RADIUS MAP
+#replaces the old pydeck output. Writes a standalone HTML file (MapLibre GL from a CDN) that also carries
+#the routing graph, so pins, snapping, and the weight-radius search all run in the browser with no server.
+#--------------------------------------------------------------------------
+import json
 
-#line layer
 #draw thinner mixed-traffic streets underneath and thick protected lanes on top
-summary_edges = summary_edges.sort_values('width', ascending=True)
+summary_edges = summary_edges.sort_values('width', ascending=True).reset_index(drop=True)
 
-path_layer = pdk.Layer(
-    "PathLayer",
-    data=summary_edges[['path', 'color', 'width', 'streetname', 'subclass', 'flow_type', 'weight']],
-    get_path="path",
-    get_color="color",
-    get_width="width",  #uses info above from width map
-    width_min_pixels=1.2,
-    width_max_pixels=10,
-    pickable=True,
-    auto_highlight=True
-)
+#---- graph data for the browser ----
+#every physical segment gets: node it starts at (NodeIDFrom), node it ends at (NodeIDTo), and the weight of travelling
+#forward (From -> To, same direction the geometry is drawn) and in reverse (To -> From). null = not allowed that way.
+fwd = bbox_edges[~bbox_edges['reversed']].drop_duplicates('segment_id').set_index('segment_id')
+rev = bbox_edges[bbox_edges['reversed']].drop_duplicates('segment_id').set_index('segment_id')
+seg_ids = summary_edges['segment_id']
 
-#arrow layer
-arrow_layer = pdk.Layer(
-    "TextLayer",
-    data=arrows_df,
-    get_position="pos",
-    get_text="'➤'",
-    get_angle="angle",
-    get_size=12,
-    get_color=[20, 20, 20, 220],
-    size_units="'pixels'",
-    billboard=False  #keeps arrows flat on the map plane so they rotate with streets
-)
+node_from = seg_ids.map(fwd['u']).fillna(seg_ids.map(rev['v']))  #reverse edges were stored as (To, From), so swap back
+node_to   = seg_ids.map(fwd['v']).fillna(seg_ids.map(rev['u']))
+w_fwd = seg_ids.map(fwd['weight'])
+w_rev = seg_ids.map(rev['weight'])
 
-#render citywide map with muted Carto Positron basemap (built into pydeck w/o key needed)
-view_state = pdk.ViewState(latitude=40.7128, longitude=-73.9600, zoom=11, pitch=0)
-deck = pdk.Deck(
-    layers=[path_layer, arrow_layer],
-    initial_view_state=view_state,
-    map_style="light",
-    tooltip={
-        #muted, greyed out, low opacity background
-        "html": "<b>{streetname}</b><br/>Class: {subclass}<br/>Flow: {flow_type}<br/>Weight: {weight}",
-        "style": {"backgroundColor": "white", "color": "black", "fontSize": "12px"}
-    }
-)
+#node ids -> small integers so the browser can use typed arrays
+n_seg = len(summary_edges)
+node_codes, _ = pd.factorize(pd.concat([node_from, node_to], ignore_index=True))
+nf_idx, nt_idx = node_codes[:n_seg], node_codes[n_seg:]
 
-output_file = "nyc_directed_network.html"
+name_codes, name_labels = pd.factorize(summary_edges['streetname'].fillna('').astype(str))
+sub_codes, sub_labels = pd.factorize(summary_edges['subclass'])
 
-deck.to_html(output_file)
-print(f"Saved citywide WebGL map with {len(summary_edges)} segments and {len(arrows_df)} arrows.")
+def nan_to_none(series):
+    return [None if pd.isna(x) else round(float(x), 1) for x in series]
+
+export = {
+    'multipliers': [class_1_weight, class_2_weight, class_3_weight, class_4_weight],
+    'subs': [str(s) for s in sub_labels],
+    'sub_colors': [subclass_palette.get(s, [100, 100, 100]) for s in sub_labels],
+    'sub_widths': [float(width_map.get(s, 2)) for s in sub_labels],
+    'names': [str(s) for s in name_labels],
+    'nf': [int(x) for x in nf_idx],
+    'nt': [int(x) for x in nt_idx],
+    'wf': nan_to_none(w_fwd),
+    'wr': nan_to_none(w_rev),
+    'name': [int(x) for x in name_codes],
+    'sub': [int(x) for x in sub_codes],
+    'coords': [[v for pt in p for v in pt] for p in summary_edges['path']],  #flat [lon,lat,lon,lat,...]
+}
+data_json = json.dumps(export, separators=(',', ':'), allow_nan=False).replace('</', '<\\/')
 
 #define legend items
 legend_items = [
@@ -387,20 +388,451 @@ legend_html = f"""
 ">
     <div style="font-weight: 600; margin-bottom: 8px; font-size: 13px;">NYC Bike Network Classes</div>
     {rows_html}
-    <div style="border-top: 1px solid #ddd; margin-top: 7px; padding-top: 6px; display:flex; align-items:center;">
-        <span style="font-weight:bold; margin-right:8px; font-size:13px;">➤</span>
-        <span>One-Way Travel Direction</span>
-    </div>
 </div>
 """
 
-# Inject the legend right before </body> in the generated HTML file
-with open(output_file, "r", encoding="utf-8") as f:
-    html_content = f.read()
+#HTML + JS for the page. plain (non-f) string so the JS braces are left alone; python only fills in the two placeholders.
+HTML_TEMPLATE = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NYC Bike Network - Weight Radius Explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@3/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3/dist/maplibre-gl.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #panel {
+    position: absolute; top: 16px; left: 16px; z-index: 1000; width: 270px;
+    background: rgba(255,255,255,0.94); padding: 12px 14px; border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; color: #222; line-height: 1.4;
+  }
+  #panel h3 { margin: 0 0 6px; font-size: 13px; }
+  #panel .row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; gap: 8px; }
+  #panel input[type=number] { width: 90px; padding: 3px 5px; font-size: 12px; }
+  #panel input[type=range] { width: 100%; margin: 0; }
+  #panel button { font-size: 12px; padding: 4px 10px; cursor: pointer; }
+  #panel .muted { color: #666; }
+  #panel .sw { display: inline-block; width: 14px; height: 4px; margin-right: 6px; border-radius: 1px; vertical-align: middle; }
+  #classes table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  #classes td { padding: 1px 0; }
+  #tip { position: absolute; display: none; z-index: 1100; pointer-events: none; background: #fff; color: #000; font-size: 12px; line-height: 1.4;
+         padding: 6px 8px; border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
+  #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; min-height: 16px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="tip"></div>
 
-html_content = html_content.replace("</body>", f"{legend_html}\n</body>")
+//panel parameters
 
+<div id="panel">
+  <h3>Weight-radius explorer</h3>
+  <div class="muted" id="hint">Loading network...</div>
+
+  <div class="row">
+    <label for="radiusNum" id="radiusLabel"><b>Weight radius</b></label>
+    <span><input type="number" id="radiusNum" min="0" step="250" value="10000"> pts</span>
+  </div>
+  <input type="range" id="radiusRange" min="0" max="100000" step="250" value="10000">
+
+  <div class="row">
+    <label><input type="checkbox" id="oneway" checked> Obey one-way directions</label>
+  </div>
+  <div class="row">
+    <label for="coreMode">Lit line color</label>
+    <select id="coreMode"><option value="class">Class colors</option><option value="solid">Highlight color</option></select>
+  </div>
+  <div class="row">
+    <label for="color">Halo / highlight color</label>
+    <input type="color" id="color" value="#e6007a">
+  </div>
+  <div class="row">
+    <button id="clear">Remove pin</button>
+  </div>
+  <div id="stats"></div>
+  <div id="classes"></div>
+</div>
+
+__LEGEND_HTML__
+
+<script>
+const D = __DATA_JSON__;
+
+
+
+const N_SEG = D.nf.length;
+const COS_LAT = Math.cos(40.7128 * Math.PI / 180);   //squash longitude so distances are ~isotropic around NYC
+const FT_PER_DEG_LAT = 364000;                        //approx, only used for the on-screen stats
+
+const NF = Int32Array.from(D.nf), NT = Int32Array.from(D.nt);
+let N_NODE = 0;
+for (let i = 0; i < N_SEG; i++) N_NODE = Math.max(N_NODE, NF[i] + 1, NT[i] + 1);
+
+//weights: Infinity = can't travel that way
+const RAW_WF = Float64Array.from(D.wf, x => x === null ? Infinity : x);
+const RAW_WR = Float64Array.from(D.wr, x => x === null ? Infinity : x);
+const WF = new Float64Array(N_SEG), WR = new Float64Array(N_SEG);
+function setOneWay(obey) {
+  for (let i = 0; i < N_SEG; i++) {
+    const f = RAW_WF[i], r = RAW_WR[i];
+    if (obey) { WF[i] = f; WR[i] = r; }
+    else { WF[i] = f !== Infinity ? f : r; WR[i] = r !== Infinity ? r : f; }  //ignore one-ways: use the only weight we have both ways
+  }
+}
+setOneWay(true);
+
+//flat coordinate storage: segment i owns XY[COFF[i] .. COFF[i+1])  as lon,lat,lon,lat,...
+const COFF = new Uint32Array(N_SEG + 1);
+{ let tot = 0; for (let i = 0; i < N_SEG; i++) { COFF[i] = tot; tot += D.coords[i].length; } COFF[N_SEG] = tot; }
+const XY = new Float64Array(COFF[N_SEG]);
+for (let i = 0; i < N_SEG; i++) XY.set(D.coords[i], COFF[i]);
+D.coords = null;
+
+//cumulative length along a segment (in "degrees of latitude" units); L = total
+function segCum(i) {
+  const s = COFF[i], n = (COFF[i + 1] - s) >> 1;
+  const cum = new Float64Array(n);
+  for (let k = 1; k < n; k++) {
+    const dx = (XY[s + 2 * k] - XY[s + 2 * k - 2]) * COS_LAT, dy = XY[s + 2 * k + 1] - XY[s + 2 * k - 1];
+    cum[k] = cum[k - 1] + Math.hypot(dx, dy);
+  }
+  return cum;
+}
+const SEG_LEN = new Float64Array(N_SEG);
+for (let i = 0; i < N_SEG; i++) { const c = segCum(i); SEG_LEN[i] = c.length ? c[c.length - 1] : 0; }
+
+//adjacency (CSR). arc code = segment*2 + dir.  dir 0: leaves NF going forward, dir 1: leaves NT going in reverse
+const HEAD = new Uint32Array(N_NODE + 1);
+for (let i = 0; i < N_SEG; i++) { HEAD[NF[i] + 1]++; HEAD[NT[i] + 1]++; }
+for (let n = 0; n < N_NODE; n++) HEAD[n + 1] += HEAD[n];
+const ARCS = new Uint32Array(2 * N_SEG);
+{
+  const cur = HEAD.slice(0, N_NODE);
+  for (let i = 0; i < N_SEG; i++) { ARCS[cur[NF[i]]++] = i * 2; ARCS[cur[NT[i]]++] = i * 2 + 1; }
+}
+
+class MinHeap {
+  constructor() { this.k = []; this.v = []; this.topKey = 0; }
+  get size() { return this.k.length; }
+  push(key, val) {
+    const k = this.k, v = this.v; let i = k.length; k.push(key); v.push(val);
+    while (i > 0) { const p = (i - 1) >> 1; if (k[p] <= key) break; k[i] = k[p]; v[i] = v[p]; i = p; }
+    k[i] = key; v[i] = val;
+  }
+  pop() {
+    const k = this.k, v = this.v; const topK = k[0], topV = v[0];
+    const lastK = k.pop(), lastV = v.pop(); const n = k.length;
+    if (n > 0) {
+      let i = 0;
+      while (true) {
+        let c = 2 * i + 1; if (c >= n) break;
+        if (c + 1 < n && k[c + 1] < k[c]) c++;
+        if (k[c] >= lastK) break;
+        k[i] = k[c]; v[i] = v[c]; i = c;
+      }
+      k[i] = lastK; v[i] = lastV;
+    }
+    this.topKey = topK; return topV;
+  }
+}
+
+//nearest point on any segment to (lon, lat). returns segment, t (0..1 along it), snapped lon/lat, distance in ft
+function snap(lon, lat) {
+  const px = lon * COS_LAT, py = lat;
+  let bestD2 = Infinity, bi = -1, bk = 0, bu = 0, bqx = 0, bqy = 0;
+  for (let i = 0; i < N_SEG; i++) {
+    const s = COFF[i], e = COFF[i + 1];
+    if (e - s < 4) continue;
+    let ax = XY[s] * COS_LAT, ay = XY[s + 1];
+    for (let j = s + 2; j < e; j += 2) {
+      const bx = XY[j] * COS_LAT, by = XY[j + 1];
+      const abx = bx - ax, aby = by - ay, len2 = abx * abx + aby * aby;
+      let u = len2 > 0 ? ((px - ax) * abx + (py - ay) * aby) / len2 : 0;
+      u = u < 0 ? 0 : (u > 1 ? 1 : u);
+      const qx = ax + u * abx, qy = ay + u * aby;
+      const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+      if (d2 < bestD2) { bestD2 = d2; bi = i; bk = (j - s) >> 1; bu = u; bqx = qx; bqy = qy; }
+      ax = bx; ay = by;
+    }
+  }
+  if (bi < 0) return null;
+  const cum = segCum(bi), L = cum[cum.length - 1];
+  const t = L > 0 ? (cum[bk - 1] + bu * (cum[bk] - cum[bk - 1])) / L : 0;
+  return { seg: bi, t, lon: bqx / COS_LAT, lat: bqy, distFt: Math.sqrt(bestD2) * FT_PER_DEG_LAT };
+}
+
+//weighted shortest path from the snapped point. returns dist[] per node (Infinity = outside the radius B)
+function dijkstra(start, B) {
+  const dist = new Float64Array(N_NODE).fill(Infinity);
+  const h = new MinHeap();
+  const relax = (n, d) => { if (d <= B && d < dist[n]) { dist[n] = d; h.push(d, n); } };
+  const s = start.seg, t = start.t;
+  if (WF[s] !== Infinity) relax(NT[s], (1 - t) * WF[s]);   //leave the pin's segment out its far end
+  if (WR[s] !== Infinity) relax(NF[s], t * WR[s]);         //...or out its near end
+  while (h.size) {
+    const u = h.pop(), d = h.topKey;
+    if (d > dist[u]) continue;
+    for (let a = HEAD[u]; a < HEAD[u + 1]; a++) {
+      const arc = ARCS[a], i = arc >> 1, rev = arc & 1;
+      const w = rev ? WR[i] : WF[i];
+      if (w === Infinity) continue;
+      relax(rev ? NF[i] : NT[i], d + w);
+    }
+  }
+  return dist;
+}
+
+function mergeIntervals(iv) {
+  const pairs = [];
+  for (let j = 0; j < iv.length; j += 2) if (iv[j + 1] - iv[j] > 1e-9) pairs.push([iv[j], iv[j + 1]]);
+  pairs.sort((x, y) => x[0] - y[0]);
+  const out = [];
+  for (const p of pairs) {
+    const last = out[out.length - 1];
+    if (last && p[0] <= last[1] + 1e-9) last[1] = Math.max(last[1], p[1]);
+    else out.push([p[0], p[1]]);
+  }
+  return out;
+}
+
+//which stretches of which segments are within budget B. returns [{i, a, b}] with a,b = fractions along the segment (0 = NodeIDFrom end)
+function litSegments(dist, B, start) {
+  const out = [];
+  for (let i = 0; i < N_SEG; i++) {
+    const iv = [];
+    const wf = WF[i], wr = WR[i];
+    if (wf !== Infinity) { const d = dist[NF[i]]; if (d < B) iv.push(0, Math.min(1, wf > 0 ? (B - d) / wf : 1)); }
+    if (wr !== Infinity) { const d = dist[NT[i]]; if (d < B) iv.push(1 - Math.min(1, wr > 0 ? (B - d) / wr : 1), 1); }
+    if (start && i === start.seg) {
+      if (wf !== Infinity) iv.push(start.t, Math.min(1, start.t + (wf > 0 ? B / wf : 1)));
+      if (wr !== Infinity) iv.push(Math.max(0, start.t - (wr > 0 ? B / wr : 1)), start.t);
+    }
+    if (!iv.length) continue;
+    for (const [a, b] of mergeIntervals(iv)) out.push({ i, a, b });
+  }
+  return out;
+}
+
+//full polyline of segment i as [[lon,lat],...]
+function segPath(i) {
+  const s = COFF[i], e = COFF[i + 1], p = [];
+  for (let k = s; k < e; k += 2) p.push([XY[k], XY[k + 1]]);
+  return p;
+}
+
+//polyline of segment i between fractions a..b of its length
+function clipPath(i, a, b) {
+  if (a <= 1e-9 && b >= 1 - 1e-9) return segPath(i);
+  const s = COFF[i], cum = segCum(i), n = cum.length, L = cum[n - 1];
+  if (n < 2 || L === 0) return null;
+  const da = a * L, db = b * L;
+  const pointAt = d => {
+    for (let k = 0; k < n - 1; k++) {
+      if (d <= cum[k + 1] || k === n - 2) {
+        const len = cum[k + 1] - cum[k];
+        let f = len > 0 ? (d - cum[k]) / len : 0; f = f < 0 ? 0 : (f > 1 ? 1 : f);
+        const x0 = XY[s + 2 * k], y0 = XY[s + 2 * k + 1], x1 = XY[s + 2 * k + 2], y1 = XY[s + 2 * k + 3];
+        return [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f];
+      }
+    }
+  };
+  const out = [pointAt(da)];
+  for (let k = 1; k < n - 1; k++) if (cum[k] > da && cum[k] < db) out.push([XY[s + 2 * k], XY[s + 2 * k + 1]]);
+  out.push(pointAt(db));
+  return out;
+}
+// ==== CORE END ====
+
+
+// ==== MAP / UI ====
+//everything is drawn with MapLibre's own line layers (no deck.gl), so the class colors can't get lost
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (x, d = 0) => x.toLocaleString(undefined, { maximumFractionDigits: d });
+const rgbStr = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+const EMPTY = { type: 'FeatureCollection', features: [] };
+
+//only draw segments that still have 2+ points after simplification
+const drawable = [];
+for (let i = 0; i < N_SEG; i++) if (COFF[i + 1] - COFF[i] >= 4) drawable.push(i);
+
+//line widths in pixels by zoom. class I is the thickest; the other classes are scaled down from it but never thinner than PX_MIN
+const ZOOMS  = [9, 12, 14, 16, 18];
+const PX_C1  = [1.4, 2.4, 3.8, 6.5, 10];
+const PX_MIN = [0.8, 1.0, 1.3, 1.8, 2.4];
+const MAX_W = Math.max(...D.sub_widths);
+const widthExpr = (k, mult) => {
+  const f = D.sub_widths[k] / MAX_W, e = ['interpolate', ['linear'], ['zoom']];
+  ZOOMS.forEach((z, j) => e.push(z, Math.max(PX_MIN[j], PX_C1[j] * f) * mult));
+  return e;
+};
+const CLASS_ORDER = D.subs.map((_, k) => k).sort((a, b) => D.sub_widths[a] - D.sub_widths[b]);   //thin first, thick drawn on top
+
+function tipHtml(i) {
+  const wf = RAW_WF[i], wr = RAW_WR[i];
+  const w = x => x === Infinity ? '&ndash;' : fmt(x, 1);
+  return `<b>${esc(D.names[D.name[i]])}</b><br/>Class: ${esc(D.subs[D.sub[i]])}<br/>Flow: ${wf !== Infinity && wr !== Infinity ? 'Two-Way' : 'One-Way'}<br/>Weight (fwd / rev): ${w(wf)} / ${w(wr)}`;
+}
+
+const map = new maplibregl.Map({
+  container: 'map', style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  center: [-73.96, 40.7128], zoom: 11
+});
+map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+let ready = false, pin = null, marker = null, queued = false, dragging = false, hoverSeg = -1, hoverQueued = false, lastMouse = null;
+const budget = () => Math.max(0, parseFloat($('radiusNum').value) || 0);
+const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; update(); }); };
+
+map.on('load', () => {
+  const sym = map.getStyle().layers.find(l => l.type === 'symbol');
+  const before = sym ? sym.id : undefined;   //insert under the basemap's labels so place names stay readable
+  const hl = $('color').value;
+
+  //one MultiLineString per bike class: the whole network is only a handful of features
+  const feats = D.subs.map((_, k) => ({ type: 'Feature', properties: { k }, geometry: { type: 'MultiLineString', coordinates: [] } }));
+  for (const i of drawable) feats[D.sub[i]].geometry.coordinates.push(segPath(i));
+  map.addSource('net', { type: 'geojson', data: { type: 'FeatureCollection', features: feats.filter(f => f.geometry.coordinates.length) }, maxzoom: 15, tolerance: 0.5 });
+  for (const id of ['lit', 'hover', 'snap']) map.addSource(id, { type: 'geojson', data: EMPTY, maxzoom: 15, tolerance: 0.5 });
+
+  const addLine = (id, source, paint, filter) => {
+    const layer = { id, type: 'line', source, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint };
+    if (filter) layer.filter = filter;
+    map.addLayer(layer, before);
+  };
+  //draw order, bottom to top: halo, network (class colors), lit lines, hovered street, pin link + snap point
+  addLine('glow-outer', 'lit', { 'line-color': hl, 'line-width': 30, 'line-blur': 18, 'line-opacity': 0.35 });
+  addLine('glow-mid',   'lit', { 'line-color': hl, 'line-width': 12, 'line-blur': 6,  'line-opacity': 0.6 });
+  for (const k of CLASS_ORDER) addLine(`net-${k}`, 'net', { 'line-color': rgbStr(D.sub_colors[k]), 'line-width': widthExpr(k, 1) }, ['==', ['get', 'k'], k]);
+  for (const k of CLASS_ORDER) addLine(`lit-${k}`, 'lit', { 'line-color': rgbStr(D.sub_colors[k]), 'line-width': widthExpr(k, 1.7) }, ['==', ['get', 'k'], k]);
+  addLine('hover', 'hover', { 'line-color': '#000000', 'line-width': 5, 'line-opacity': 0.7 });
+  addLine('snap-link', 'snap', { 'line-color': '#3c3c3c', 'line-width': 2 }, ['==', ['geometry-type'], 'LineString']);
+  map.addLayer({ id: 'snap-pt', type: 'circle', source: 'snap', filter: ['==', ['geometry-type'], 'Point'],
+    paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-width': 3, 'circle-stroke-color': hl } }, before);
+
+  ready = true;
+  $('hint').textContent = 'Click the map to drop a pin. Drag the pin, or click somewhere else, to move it.';
+  update();
+});
+
+//halo color / lit-line color mode (cheap: no re-search)
+function applyColors() {
+  if (!ready) return;
+  const hl = $('color').value, solid = $('coreMode').value === 'solid';
+  map.setPaintProperty('glow-outer', 'line-color', hl);
+  map.setPaintProperty('glow-mid', 'line-color', hl);
+  map.setPaintProperty('snap-pt', 'circle-stroke-color', hl);
+  for (const k of CLASS_ORDER) map.setPaintProperty(`lit-${k}`, 'line-color', solid ? hl : rgbStr(D.sub_colors[k]));
+}
+
+function updateReach() {   //unit helper: shown as a hover tip on the "Weight radius" label
+  const B = budget(), m = D.multipliers;
+  $('radiusLabel').title = `${fmt(B)} pts buys a straight run of about ${fmt(B / m[0] / 5280, 2)} mi on Class I, ${fmt(B / m[1] / 5280, 2)} mi Class II, ${fmt(B / m[2] / 5280, 2)} mi Class III, or ${fmt(B / m[3] / 5280, 2)} mi unmarked street`;
+}
+
+function update() {
+  updateReach();
+  if (!ready) return;
+  if (!pin) {
+    map.getSource('lit').setData(EMPTY); map.getSource('snap').setData(EMPTY);
+    $('stats').textContent = ''; $('classes').innerHTML = ''; return;
+  }
+  const t0 = performance.now();
+  const B = budget();
+  const sn = snap(pin.lng, pin.lat);
+  if (!sn) return;
+  const dist = dijkstra(sn, B);
+  const lit = litSegments(dist, B, sn);
+
+  const miles = new Float64Array(D.subs.length);
+  const byClass = D.subs.map(() => []);
+  for (const { i, a, b } of lit) {
+    const k = D.sub[i];
+    miles[k] += (b - a) * SEG_LEN[i] * FT_PER_DEG_LAT / 5280;
+    const p = clipPath(i, a, b);
+    if (p && p.length >= 2) byClass[k].push(p);
+  }
+  let nodes = 0; for (let n = 0; n < N_NODE; n++) if (dist[n] !== Infinity) nodes++;
+
+  map.getSource('lit').setData({ type: 'FeatureCollection',
+    features: byClass.map((coords, k) => ({ type: 'Feature', properties: { k }, geometry: { type: 'MultiLineString', coordinates: coords } })).filter(f => f.geometry.coordinates.length) });
+  map.getSource('snap').setData({ type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[pin.lng, pin.lat], [sn.lon, sn.lat]] } },
+    { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [sn.lon, sn.lat] } } ] });
+
+  //per-class mileage inside the radius (fixed order, thickest class first, so rows stay put between pin drops)
+  const order = [...CLASS_ORDER].reverse();
+  let total = 0; for (const m of miles) total += m;
+  const rows = order.map(k => `<tr style="opacity:${miles[k] > 0.005 ? 1 : 0.4}"><td><span class="sw" style="background:${rgbStr(D.sub_colors[k])}"></span>${esc(D.subs[k])}</td><td style="text-align:right">${fmt(miles[k], 2)} mi</td></tr>`).join('');
+  $('classes').innerHTML = `<table>${rows}<tr style="border-top:1px solid #ddd"><td><b>Total in radius</b></td><td style="text-align:right"><b>${fmt(total, 2)} mi</b></td></tr></table>`;
+  $('stats').innerHTML =
+    `Pin snapped <b>${fmt(sn.distFt)} ft</b> onto <b>${esc(D.names[D.name[sn.seg]])}</b> (${esc(D.subs[D.sub[sn.seg]])})<br>` +
+    `${fmt(lit.length)} street pieces lit, ${fmt(nodes)} intersections reached <span class="muted">(${fmt(performance.now() - t0)} ms)</span>`;
+}
+
+//hover: find the street nearest the cursor ourselves (same snap() as the pin), so thin lines are easy to hit
+const HOVER_PX = 8;
+function setHover(i) {
+  hoverSeg = i;
+  map.getSource('hover').setData(i < 0 ? EMPTY : { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: segPath(i) } });
+}
+function hideTip() {
+  $('tip').style.display = 'none';
+  if (ready && hoverSeg >= 0) setHover(-1);
+}
+function onHover() {
+  hoverQueued = false;
+  if (!ready || !lastMouse || dragging) return;
+  const { lngLat, point } = lastMouse;
+  const s = snap(lngLat.lng, lngLat.lat);
+  const ftPerPx = 78271.517 * Math.cos(lngLat.lat * Math.PI / 180) / Math.pow(2, map.getZoom()) * 3.28084;   //MapLibre: 512px tiles
+  if (!s || s.distFt > HOVER_PX * ftPerPx) { hideTip(); return; }
+  const tip = $('tip');
+  tip.innerHTML = tipHtml(s.seg);
+  tip.style.display = 'block';
+  tip.style.left = Math.min(point.x + 14, window.innerWidth - 260) + 'px';
+  tip.style.top = (point.y + 14) + 'px';
+  if (hoverSeg !== s.seg) setHover(s.seg);
+}
+map.on('mousemove', e => { lastMouse = e; if (!hoverQueued) { hoverQueued = true; requestAnimationFrame(onHover); } });
+map.on('movestart', hideTip);
+map.getCanvas().addEventListener('mouseleave', () => { lastMouse = null; hideTip(); });
+
+function placePin(ll) {
+  pin = { lng: ll.lng, lat: ll.lat };
+  if (!marker) {
+    marker = new maplibregl.Marker({ draggable: true }).setLngLat(ll).addTo(map);
+    const moved = () => { const p = marker.getLngLat(); pin = { lng: p.lng, lat: p.lat }; schedule(); };
+    marker.on('dragstart', () => { dragging = true; hideTip(); });
+    marker.on('drag', moved); marker.on('dragend', () => { dragging = false; moved(); });
+  } else marker.setLngLat(ll);
+  $('hint').textContent = 'Drag the pin, or click somewhere else, to move it.';
+  schedule();
+}
+
+map.on('click', e => {
+  if (e.originalEvent.target.closest('.maplibregl-marker')) return;
+  placePin(e.lngLat);
+});
+
+$('radiusNum').addEventListener('input', () => { $('radiusRange').value = Math.min(budget(), +$('radiusRange').max); schedule(); });
+$('radiusRange').addEventListener('input', () => { $('radiusNum').value = $('radiusRange').value; schedule(); });
+$('oneway').addEventListener('change', () => { setOneWay($('oneway').checked); schedule(); });
+$('color').addEventListener('input', applyColors);
+$('coreMode').addEventListener('change', applyColors);
+$('clear').addEventListener('click', () => { if (marker) marker.remove(); marker = null; pin = null; schedule(); });
+updateReach();
+</script>
+</body>
+</html>
+'''
+
+output_file = "nyc_directed_network.html"
+page = HTML_TEMPLATE.replace('__LEGEND_HTML__', legend_html).replace('__DATA_JSON__', data_json)
 with open(output_file, "w", encoding="utf-8") as f:
-    f.write(html_content)
+    f.write(page)
 
-print(f"Added corner legend to {output_file}")
+print(f"Saved interactive map with {n_seg} segments to {output_file}")
