@@ -7,7 +7,7 @@ Builds a weighted, directed NYC bike network from the DCP LION GeoPackage and ex
 
 ```
 pip install networkx geopandas shapely folium pydeck pandas mapclassify matplotlib
-python route_test.py --urbanblogs /path/to/your/UrbanBlogs [--gpkg path/to/LION.gpkg]
+python route_test.py --urbanblogs /path/to/UrbanBlogs [--gpkg path/to/LION.gpkg]
 ```
 
 `--urbanblogs` is required (it differs per machine). The script writes the map data to
