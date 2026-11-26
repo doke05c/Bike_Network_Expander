@@ -470,6 +470,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 </div>
 
 <script>
+window.onerror = (msg, src, line) => { const h = document.getElementById('hint'); if (h) h.textContent = 'Error: ' + msg + ' (line ' + line + ')'; };
 const D = __DATA_JSON__;
 
 // ==== CORE START (pure logic, no DOM / no deck.gl) ====
