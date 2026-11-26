@@ -426,8 +426,6 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 <div id="map"></div>
 <div id="tip"></div>
 
-//panel parameters
-
 <div id="panel">
   <h3>Weight-radius explorer</h3>
   <div class="muted" id="hint">Loading network...</div>
@@ -436,7 +434,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
     <label for="radiusNum" id="radiusLabel"><b>Weight radius</b></label>
     <span><input type="number" id="radiusNum" min="0" step="250" value="10000"> pts</span>
   </div>
-  <input type="range" id="radiusRange" min="0" max="100000" step="250" value="10000">
+  <input type="range" id="radiusRange" min="0" max="60000" step="250" value="10000">
 
   <div class="row">
     <label><input type="checkbox" id="oneway" checked> Obey one-way directions</label>
@@ -461,8 +459,7 @@ __LEGEND_HTML__
 <script>
 const D = __DATA_JSON__;
 
-
-
+// ==== CORE START (pure logic, no DOM / no deck.gl) ====
 const N_SEG = D.nf.length;
 const COS_LAT = Math.cos(40.7128 * Math.PI / 180);   //squash longitude so distances are ~isotropic around NYC
 const FT_PER_DEG_LAT = 364000;                        //approx, only used for the on-screen stats
@@ -688,8 +685,14 @@ const budget = () => Math.max(0, parseFloat($('radiusNum').value) || 0);
 const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; update(); }); };
 
 map.on('load', () => {
-  const sym = map.getStyle().layers.find(l => l.type === 'symbol');
-  const before = sym ? sym.id : undefined;   //insert under the basemap's labels so place names stay readable
+  //insert our layers above ALL of the basemap's roads/fills/lines but still under its labels. (a label layer such as water names can sit
+  //*before* the road layers in the style, so "under the first label" would leave the basemap streets painted on top of the bike lanes)
+  const styleLayers = map.getStyle().layers;
+  let lastGeometry = -1;
+  styleLayers.forEach((l, j) => { if (l.type !== 'symbol') lastGeometry = j; });
+  const sym = styleLayers.slice(lastGeometry + 1).find(l => l.type === 'symbol');
+  const before = sym ? sym.id : undefined;
+  console.log('bike layers inserted below basemap layer:', before || '(top of stack)');
   const hl = $('color').value;
 
   //one MultiLineString per bike class: the whole network is only a handful of features
