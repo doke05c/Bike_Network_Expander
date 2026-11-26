@@ -833,9 +833,9 @@ updateReach();
 </html>
 '''
 
-output_file = "nyc_directed_network.html"
+output_file_path = "/home/doke30/urban_blogs/UrbanBlogs/posts/nyc_directed_network.html"
 page = HTML_TEMPLATE.replace('__LEGEND_HTML__', legend_html).replace('__DATA_JSON__', data_json)
-with open(output_file, "w", encoding="utf-8") as f:
+with open(output_file_path, "w", encoding="utf-8") as f:
     f.write(page)
 
-print(f"Saved interactive map with {n_seg} segments to {output_file}")
+print(f"Saved interactive map with {n_seg} segments to {output_file_path}")
